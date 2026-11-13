@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Sistema Comercial</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+
+    <main class="login-container">
+        <h1>Sistema Comercial</h1>
+        <p>Acesse sua conta para continuar</p>
+
+        <form id="formLogin">
+            <label for="email">E-mail</label>
+            <input type="email" id="email" required>
+
+            <label for="senha">Senha</label>
+            <input type="password" id="senha" required>
+
+            <button type="submit">Entrar</button>
+        </form>
+
+        <p id="mensagem"></p>
+    </main>
+
+    <script>
+        const token = localStorage.getItem('token')
+
+        if (token) {
+            window.location.href = 'index.html'
+        }
+
+        document.getElementById('formLogin').addEventListener('submit', async function (event) {
+            event.preventDefault()
+
+            const email = document.getElementById('email').value
+            const senha = document.getElementById('senha').value
+            const mensagem = document.getElementById('mensagem')
+
+            try {
+                const resposta = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, senha })
+                })
+
+                const dados = await resposta.json()
+
+                if (!resposta.ok) {
+                    mensagem.textContent = dados.mensagem
+                    return
+                }
+
+                localStorage.setItem('token', dados.token)
+                localStorage.setItem('usuario', JSON.stringify(dados.usuario))
+
+                window.location.href = 'index.html'
+
+            } catch (erro) {
+                mensagem.textContent = 'Não foi possível conectar ao servidor'
+            }
+        })
+    </script>
+
+</body>
+</html>
