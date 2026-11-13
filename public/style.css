@@ -258,3 +258,5 @@ td button {
         grid-template-columns: 1fr;
     }
 }
+button:disabled { opacity: .5; cursor: default; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 600px; }
