@@ -1,9 +1,4 @@
 
--- =========================================
--- USUÁRIOS
--- Senha de demonstração: Admin123!
--- =========================================
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE usuarios (
