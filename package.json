@@ -2,9 +2,13 @@
   "name": "projeto-manutencao",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/server.js",
+    "test": "npm run test:integration",
+    "test:integration": "node scripts/teste-banco.mjs",
+    "db:migrate": "node scripts/migrar.mjs",
+    "cert:dev": "node scripts/certificado.mjs"
   },
   "keywords": [],
   "author": "",
@@ -16,5 +20,8 @@
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0"
   }
 }

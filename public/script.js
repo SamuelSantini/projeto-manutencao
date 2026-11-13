@@ -1,547 +1,98 @@
-const token = localStorage.getItem('token')
-const usuario = JSON.parse(localStorage.getItem('usuario') || 'null')
-
-if (!token || !usuario) {
-    window.location.href = 'login.html'
+const $=id=>document.getElementById(id)
+const token=localStorage.getItem('token')
+let usuario=null
+try {usuario=JSON.parse(localStorage.getItem('usuario')||'null')} catch {}
+function sair(){localStorage.removeItem('token');localStorage.removeItem('usuario');location.href='/login'}
+if(!token||!usuario)sair()
+const paginas={clientes:1,produtos:1,pedidos:1,auditoria:1}
+const nomes={clientes:'Clientes',produtos:'Produtos',pedidos:'Pedidos',auditoria:'Auditoria'}
+let produtosPedido=[],itens=[]
+const moeda=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+function mensagem(s){$('mensagem').textContent=s}
+async function api(path,method='GET',body){
+ let r;try {r=await fetch('/api'+path,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined})}catch{throw Error('Não foi possível conectar ao servidor')}
+ const d=await r.json().catch(()=>null)
+ if(r.status===401){sair();throw Error('Sessão expirada')}
+ if(!r.ok||!d)throw Error(d?.mensagem||'Resposta inválida do servidor')
+ return d
 }
-
-const mensagem = document.getElementById('mensagem')
-const itensPedido = []
-
-document.getElementById('nomeUsuario').textContent =
-    usuario ? `Usuário: ${usuario.nome}` : ''
-
-function escapar(valor) {
-    return String(valor ?? '').replace(/[&<>"']/g, function (caractere) {
-        return {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-        }[caractere]
-    })
+function executar(fn){return async e=>{try{await fn(e)}catch(erro){mensagem(erro.message)}}}
+function admin(){return usuario?.perfil==='admin'}
+async function painel(){const d=await api('/painel');$('totalClientes').textContent=d.clientes;$('totalProdutos').textContent=d.produtos;$('faturamento').textContent=moeda(d.faturamento)}
+async function abrir(nome){
+ document.querySelectorAll('.tela').forEach(t=>t.classList.toggle('escondido',t.id!==nome))
+ document.querySelectorAll('[data-tela]').forEach(b=>b.classList.toggle('ativo',b.dataset.tela===nome))
+ mensagem('');if(nome==='inicio')await painel();else{await carregar(nome);if(nome==='pedidos')await opcoesPedido()}
 }
-
-function mostrarMensagem(texto) {
-    mensagem.textContent = texto
+document.querySelectorAll('[data-tela]').forEach(b=>b.addEventListener('click',executar(()=>abrir(b.dataset.tela))))
+$('btnSair').onclick=sair
+function botao(acao,id,texto,classe=''){return `<button class="${classe}" data-acao="${acao}" data-id="${id}">${texto}</button>`}
+async function carregar(tipo){
+ let d=await api(`/${tipo}?page=${paginas[tipo]}`)
+ if(!d.dados.length&&paginas[tipo]>1){paginas[tipo]=Math.max(1,d.paginas);d=await api(`/${tipo}?page=${paginas[tipo]}`)}
+ $('lista'+nomes[tipo]).innerHTML=d.dados.map(r=>{
+ if(tipo==='clientes')return `<tr><td>${esc(r.nome)}</td><td>${esc(r.email)}</td><td>${esc(r.telefone)}</td><td>${esc(r.cpf_cnpj)}</td><td>${botao('editarCliente',r.id_cliente,'Editar')}${admin()?botao('excluirCliente',r.id_cliente,'Excluir','btn-excluir'):''}</td></tr>`
+ if(tipo==='produtos')return `<tr><td>${esc(r.nome)}</td><td>${moeda(r.preco)}</td><td>${r.estoque}</td><td>${botao('editarProduto',r.id_produto,'Editar')}${admin()?botao('desativarProduto',r.id_produto,'Desativar')+botao('excluirProduto',r.id_produto,'Excluir','btn-excluir'):''}</td></tr>`
+ if(tipo==='pedidos'){
+ const proximo={rascunho:['confirmado','Confirmar'],confirmado:['pago','Registrar pagamento'],pago:['entregue','Registrar entrega']}[r.status]
+ return `<tr><td>${r.id_pedido}</td><td>${esc(r.cliente)}</td><td>${esc(r.usuario)}</td><td>${new Date(r.data_pedido).toLocaleDateString('pt-BR')}</td><td>${esc(r.status)}</td><td>${moeda(r.valor_total)}</td><td>${botao('detalhes',r.id_pedido,'Detalhes')}${proximo?botao('status:'+proximo[0],r.id_pedido,proximo[1]):''}${admin()&&['rascunho','confirmado'].includes(r.status)?botao('cancelar',r.id_pedido,'Cancelar','btn-excluir'):''}</td></tr>`
+ }
+ return `<tr><td>${new Date(r.data_hora).toLocaleString('pt-BR')}</td><td>${esc(r.usuario||'Carga inicial')}</td><td>${esc(r.acao)}</td><td><details><summary>Ver alteração</summary><pre>${esc(r.detalhe)}</pre></details></td></tr>`
+ }).join('')
+ const p=$('paginas'+nomes[tipo]);p.replaceChildren()
+ for(const [label,delta,disabled] of [['Anterior',-1,d.page<=1],['Próxima',1,d.page>=d.paginas]]){
+ const b=document.createElement('button');b.textContent=label;b.disabled=disabled;b.onclick=executar(async()=>{paginas[tipo]+=delta;await carregar(tipo)});p.append(b)
+ }
+ const s=document.createElement('span');s.textContent=`Página ${d.page} de ${Math.max(1,d.paginas)} — ${d.total} registros`;p.append(s)
 }
-
-async function requisicao(url, metodo = 'GET', dados = null) {
-    const opcoes = {
-        method: metodo,
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    }
-
-    if (dados !== null) {
-        opcoes.headers['Content-Type'] = 'application/json'
-        opcoes.body = JSON.stringify(dados)
-    }
-
-    const resposta = await fetch(url, opcoes)
-
-    const resultado = await resposta.json()
-
-    if (resposta.status === 401) {
-        localStorage.removeItem('token')
-        localStorage.removeItem('usuario')
-        window.location.href = 'login.html'
-        throw new Error('Sessão expirada')
-    }
-
-    if (!resposta.ok) {
-        throw new Error(resultado.mensagem || 'Erro na requisição')
-    }
-
-    return resultado
+function limpar(tipo){$('form'+tipo).reset();$('id'+tipo).value='';if(tipo==='Produto')$('versaoProduto').value=''}
+for(const tipo of ['Cliente','Produto']){
+ $('limpar'+tipo).onclick=()=>limpar(tipo)
+ $('form'+tipo).addEventListener('submit',executar(async e=>{
+ e.preventDefault();const id=$('id'+tipo).value
+ const body=tipo==='Cliente'?{nome:$('clienteNome').value,email:$('clienteEmail').value,telefone:$('clienteTelefone').value,cpf_cnpj:$('clienteDocumento').value}:{nome:$('produtoNome').value,descricao:$('produtoDescricao').value,preco:Number($('produtoPreco').value),estoque:Number($('produtoEstoque').value),...(id?{versao:Number($('versaoProduto').value)}:{})}
+ const recurso=tipo==='Cliente'?'clientes':'produtos';await api('/'+recurso+(id?'/'+id:''),id?'PUT':'POST',body);limpar(tipo);await carregar(recurso);mensagem('Cadastro salvo')
+ }))
 }
-
-function formatarMoeda(valor) {
-    return Number(valor).toLocaleString('pt-BR', {
-        style: 'currency',
-        currency: 'BRL'
-    })
+document.addEventListener('click',executar(async e=>{
+ const b=e.target.closest('[data-acao]');if(!b)return
+ const {acao,id}=b.dataset
+ if(acao==='editarCliente'){
+ const c=await api('/clientes/'+id);$('idCliente').value=id;for(const [campo,key]of [['Nome','nome'],['Email','email'],['Telefone','telefone'],['Documento','cpf_cnpj']])$('cliente'+campo).value=c[key]??''
+ }else if(acao==='editarProduto'){
+ const p=await api('/produtos/'+id);$('idProduto').value=id;$('versaoProduto').value=p.versao;for(const [campo,key]of [['Nome','nome'],['Descricao','descricao'],['Preco','preco'],['Estoque','estoque']])$('produto'+campo).value=p[key]??''
+ }else if(acao==='excluirCliente'){
+ if(!confirm('Excluir cliente e todos os pedidos e itens vinculados?'))return;await api('/clientes/'+id,'DELETE');await carregar('clientes');mensagem('Cliente e pedidos excluídos')
+ }else if(acao==='excluirProduto'||acao==='desativarProduto'){
+ if(!confirm(acao==='excluirProduto'?'Excluir definitivamente este produto?':'Desativar este produto?'))return
+ await api('/produtos/'+id+(acao==='desativarProduto'?'/desativar':''),acao==='desativarProduto'?'PATCH':'DELETE');await carregar('produtos');mensagem('Operação concluída')
+ }else if(acao==='detalhes'){
+ const d=await api('/pedidos/'+id);$('detalhesPedido').innerHTML=`<h3>Pedido ${id} — ${esc(d.pedido.status)}</h3>`+d.itens.map(i=>`<p>${esc(i.produto)} — ${i.quantidade} × preço atual ${moeda(i.preco_unitario)} — subtotal ${moeda(i.subtotal)}</p>`).join('')+`<strong>Total: ${moeda(d.pedido.valor_total)}</strong>`
+ }else if(acao==='cancelar'||acao.startsWith('status:')){
+ if(!confirm(acao==='cancelar'?'Cancelar pedido e devolver estoque?':'Alterar status do pedido?'))return
+ await api('/pedidos/'+id+(acao==='cancelar'?'':'/status'),acao==='cancelar'?'DELETE':'PUT',acao==='cancelar'?undefined:{status:acao.split(':')[1]});await carregar('pedidos');await opcoesPedido();$('detalhesPedido').replaceChildren();mensagem('Pedido atualizado')
+ }else if(acao==='remover') {itens.splice(Number(id),1);renderItens()}
+}))
+async function todas(tipo){const dados=[];let page=1,d;do{d=await api(`/${tipo}?page=${page++}&limit=100`);dados.push(...d.dados)}while(page<=d.paginas);return dados}
+async function opcoesPedido(){
+ const [clientes,produtos]=await Promise.all([todas('clientes'),todas('produtos')]);produtosPedido=produtos
+ for(const [campo,lista,key,label]of [['pedidoCliente',clientes,'id_cliente',c=>c.nome],['pedidoProduto',produtos,'id_produto',p=>`${p.nome} — ${moeda(p.preco)} — estoque ${p.estoque}`]]){
+ const atual=$(campo).value;$(campo).innerHTML='<option value="">Selecione</option>'+lista.map(i=>`<option value="${i[key]}">${esc(label(i))}</option>`).join('');$(campo).value=atual
+ }
 }
-
-function formatarData(data) {
-    return new Date(data).toLocaleDateString('pt-BR')
+function renderItens(){
+ $('itensSelecionados').innerHTML=itens.map((i,k)=>`<li>${esc(i.nome)} — ${i.quantidade} ${botao('remover',k,'Remover')}</li>`).join('')
+ $('totalPedido').textContent='Total estimado: '+moeda(itens.reduce((s,i)=>s+Math.round(Number(i.preco)*100)*i.quantidade,0)/100)+' (mínimo R$ 50,00)'
 }
-
-function abrirTela(nome) {
-    document.querySelectorAll('.tela').forEach(function (tela) {
-        tela.classList.add('escondido')
-    })
-
-    document.getElementById(nome).classList.remove('escondido')
-
-    document.querySelectorAll('.menu-btn').forEach(function (botao) {
-        botao.classList.remove('ativo')
-    })
-
-    document.querySelector(`[data-tela="${nome}"]`).classList.add('ativo')
-
-    mostrarMensagem('')
-
-    if (nome === 'clientes') carregarClientes()
-    if (nome === 'produtos') carregarProdutos()
-    if (nome === 'pedidos') carregarPedidos()
-}
-
-document.querySelectorAll('.menu-btn').forEach(function (botao) {
-    botao.addEventListener('click', function () {
-        abrirTela(botao.dataset.tela)
-    })
+$('adicionarItem').onclick=executar(async()=>{
+ const id=Number($('pedidoProduto').value),quantidade=Number($('pedidoQuantidade').value),p=produtosPedido.find(i=>i.id_produto===id)
+ if(!p||!Number.isInteger(quantidade)||quantidade<1)throw Error('Selecione produto e quantidade inteira positiva')
+ if(itens.some(i=>i.id_produto===id))throw Error('Produto já incluído. Remova o item para alterar a quantidade.')
+ itens.push({...p,id_produto:id,quantidade});renderItens()
 })
-
-document.querySelectorAll('[data-ir]').forEach(function (botao) {
-    botao.addEventListener('click', function () {
-        abrirTela(botao.dataset.ir)
-    })
-})
-
-document.getElementById('btnSair').addEventListener('click', function () {
-    localStorage.removeItem('token')
-    localStorage.removeItem('usuario')
-    window.location.href = 'login.html'
-})
-
-async function carregarClientes() {
-    try {
-        const clientes = await requisicao('/api/clientes')
-        const lista = document.getElementById('listaClientes')
-
-        lista.innerHTML = ''
-
-        clientes.forEach(function (cliente) {
-            lista.innerHTML += `
-                <tr>
-                    <td>${escapar(cliente.nome)}</td>
-                    <td>${escapar(cliente.email)}</td>
-                    <td>${escapar(cliente.telefone)}</td>
-                    <td>
-                        <button class="btn-editar" data-editar-cliente="${cliente.id_cliente}">
-                            Editar
-                        </button>
-                        <button class="btn-excluir" data-excluir-cliente="${cliente.id_cliente}">
-                            Excluir
-                        </button>
-                    </td>
-                </tr>
-            `
-        })
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-}
-
-document.getElementById('formCliente').addEventListener('submit', async function (event) {
-    event.preventDefault()
-
-    const id = document.getElementById('idCliente').value
-
-    const dados = {
-        nome: document.getElementById('clienteNome').value,
-        email: document.getElementById('clienteEmail').value,
-        telefone: document.getElementById('clienteTelefone').value,
-        cpf_cnpj: document.getElementById('clienteDocumento').value
-    }
-
-    try {
-        if (id) {
-            await requisicao(`/api/clientes/${id}`, 'PUT', dados)
-            mostrarMensagem('Cliente atualizado com sucesso')
-        } else {
-            await requisicao('/api/clientes', 'POST', dados)
-            mostrarMensagem('Cliente cadastrado com sucesso')
-        }
-
-        this.reset()
-        document.getElementById('idCliente').value = ''
-        carregarClientes()
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-document.getElementById('listaClientes').addEventListener('click', async function (event) {
-    const idEditar = event.target.dataset.editarCliente
-    const idExcluir = event.target.dataset.excluirCliente
-
-    try {
-        if (idEditar) {
-            const clientes = await requisicao('/api/clientes')
-            const cliente = clientes.find(function (item) {
-                return item.id_cliente == idEditar
-            })
-
-            document.getElementById('idCliente').value = cliente.id_cliente
-            document.getElementById('clienteNome').value = cliente.nome
-            document.getElementById('clienteEmail').value = cliente.email || ''
-            document.getElementById('clienteTelefone').value = cliente.telefone || ''
-            document.getElementById('clienteDocumento').value = cliente.cpf_cnpj || ''
-
-            mostrarMensagem('Editando cliente')
-
-        }
-
-        if (idExcluir) {
-            if (!confirm('Deseja realmente excluir este cliente?')) return
-
-            await requisicao(`/api/clientes/${idExcluir}`, 'DELETE')
-
-            mostrarMensagem('Cliente excluído com sucesso')
-            carregarClientes()
-        }
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-document.getElementById('limparCliente').addEventListener('click', function () {
-    document.getElementById('formCliente').reset()
-    document.getElementById('idCliente').value = ''
-    mostrarMensagem('')
-})
-
-async function carregarProdutos() {
-    try {
-        const produtos = await requisicao('/api/produtos')
-        const lista = document.getElementById('listaProdutos')
-
-        lista.innerHTML = ''
-
-        produtos.forEach(function (produto) {
-            lista.innerHTML += `
-                <tr>
-                    <td>${escapar(produto.nome)}</td>
-                    <td>${formatarMoeda(produto.preco)}</td>
-                    <td>${escapar(produto.estoque)}</td>
-                    <td>
-                        <button class="btn-editar" data-editar-produto="${produto.id_produto}">
-                            Editar
-                        </button>
-                        <button class="btn-excluir" data-excluir-produto="${produto.id_produto}">
-                            Desativar
-                        </button>
-                    </td>
-                </tr>
-            `
-        })
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-}
-
-document.getElementById('formProduto').addEventListener('submit', async function (event) {
-    event.preventDefault()
-
-    const id = document.getElementById('idProduto').value
-
-    const dados = {
-        nome: document.getElementById('produtoNome').value,
-        descricao: document.getElementById('produtoDescricao').value,
-        preco: Number(document.getElementById('produtoPreco').value),
-        estoque: Number(document.getElementById('produtoEstoque').value)
-    }
-
-    try {
-        if (id) {
-            await requisicao(`/api/produtos/${id}`, 'PUT', dados)
-            mostrarMensagem('Produto atualizado com sucesso')
-        } else {
-            await requisicao('/api/produtos', 'POST', dados)
-            mostrarMensagem('Produto cadastrado com sucesso')
-        }
-
-        this.reset()
-        document.getElementById('idProduto').value = ''
-        carregarProdutos()
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-document.getElementById('listaProdutos').addEventListener('click', async function (event) {
-    const idEditar = event.target.dataset.editarProduto
-    const idExcluir = event.target.dataset.excluirProduto
-
-    try {
-        if (idEditar) {
-            const produtos = await requisicao('/api/produtos')
-            const produto = produtos.find(function (item) {
-                return item.id_produto == idEditar
-            })
-
-            document.getElementById('idProduto').value = produto.id_produto
-            document.getElementById('produtoNome').value = produto.nome
-            document.getElementById('produtoDescricao').value = produto.descricao || ''
-            document.getElementById('produtoPreco').value = produto.preco
-            document.getElementById('produtoEstoque').value = produto.estoque
-
-            mostrarMensagem('Editando produto')
-        }
-
-        if (idExcluir) {
-            if (!confirm('Deseja realmente desativar este produto?')) return
-
-            await requisicao(`/api/produtos/${idExcluir}`, 'DELETE')
-
-            mostrarMensagem('Produto desativado com sucesso')
-            carregarProdutos()
-        }
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-document.getElementById('limparProduto').addEventListener('click', function () {
-    document.getElementById('formProduto').reset()
-    document.getElementById('idProduto').value = ''
-    mostrarMensagem('')
-})
-
-async function carregarDadosPedido() {
-    try {
-        const clientes = await requisicao('/api/clientes')
-        const produtos = await requisicao('/api/produtos')
-
-        const campoCliente = document.getElementById('pedidoCliente')
-        const campoProduto = document.getElementById('pedidoProduto')
-
-        campoCliente.innerHTML = '<option value="">Selecione um cliente</option>'
-        campoProduto.innerHTML = '<option value="">Selecione um produto</option>'
-
-        clientes.forEach(function (cliente) {
-            campoCliente.innerHTML += `
-                <option value="${cliente.id_cliente}">
-                    ${escapar(cliente.nome)}
-                </option>
-            `
-        })
-
-        produtos.forEach(function (produto) {
-            campoProduto.innerHTML += `
-                <option value="${produto.id_produto}">
-                    ${escapar(produto.nome)} - Estoque: ${produto.estoque}
-                </option>
-            `
-        })
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-}
-
-function atualizarItensPedido() {
-    const lista = document.getElementById('itensSelecionados')
-
-    lista.innerHTML = ''
-
-    itensPedido.forEach(function (item, indice) {
-        lista.innerHTML += `
-            <li>
-                ${escapar(item.nome)} - Quantidade: ${item.quantidade}
-                <button type="button" data-remover-item="${indice}">Remover</button>
-            </li>
-        `
-    })
-}
-
-document.getElementById('adicionarItem').addEventListener('click', async function () {
-    const idProduto = document.getElementById('pedidoProduto').value
-    const quantidade = Number(document.getElementById('pedidoQuantidade').value)
-
-    if (!idProduto || !Number.isInteger(quantidade) || quantidade <= 0) {
-        mostrarMensagem('Selecione um produto e informe uma quantidade válida')
-        return
-    }
-
-    try {
-        const produtos = await requisicao('/api/produtos')
-        const produto = produtos.find(function (item) {
-            return item.id_produto == idProduto
-        })
-
-        if (!produto) {
-            mostrarMensagem('Produto não encontrado')
-            return
-        }
-
-        const itemExistente = itensPedido.find(function (item) {
-            return item.id_produto == idProduto
-        })
-
-        const quantidadeTotal = quantidade + (itemExistente ? itemExistente.quantidade : 0)
-
-        if (quantidadeTotal > produto.estoque) {
-            mostrarMensagem('Quantidade maior que o estoque disponível')
-            return
-        }
-
-        if (itemExistente) {
-            itemExistente.quantidade = quantidadeTotal
-        } else {
-            itensPedido.push({
-                id_produto: produto.id_produto,
-                nome: produto.nome,
-                quantidade: quantidade
-            })
-        }
-
-        atualizarItensPedido()
-        mostrarMensagem('Produto adicionado ao pedido')
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-document.getElementById('itensSelecionados').addEventListener('click', function (event) {
-    const indice = event.target.dataset.removerItem
-
-    if (indice === undefined) return
-
-    itensPedido.splice(Number(indice), 1)
-    atualizarItensPedido()
-})
-
-document.getElementById('formPedido').addEventListener('submit', async function (event) {
-    event.preventDefault()
-
-    const idCliente = document.getElementById('pedidoCliente').value
-
-    if (!idCliente || itensPedido.length === 0) {
-        mostrarMensagem('Selecione um cliente e adicione pelo menos um produto')
-        return
-    }
-
-    const dados = {
-        id_cliente: Number(idCliente),
-        itens: itensPedido.map(function (item) {
-            return {
-                id_produto: item.id_produto,
-                quantidade: item.quantidade
-            }
-        })
-    }
-
-    try {
-        const resultado = await requisicao('/api/pedidos', 'POST', dados)
-
-        mostrarMensagem(
-            `Pedido ${resultado.id_pedido} registrado. Total: ${formatarMoeda(resultado.valor_total)}`
-        )
-
-        itensPedido.length = 0
-        atualizarItensPedido()
-        this.reset()
-
-        await carregarPedidos()
-        await carregarDadosPedido()
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-async function carregarPedidos() {
-    try {
-        await carregarDadosPedido()
-
-        const pedidos = await requisicao('/api/pedidos')
-        const lista = document.getElementById('listaPedidos')
-
-        lista.innerHTML = ''
-
-        pedidos.forEach(function (pedido) {
-            lista.innerHTML += `
-                <tr>
-                    <td>${pedido.id_pedido}</td>
-                    <td>${escapar(pedido.cliente)}</td>
-                    <td>${formatarData(pedido.data_pedido)}</td>
-                    <td>${escapar(pedido.status)}</td>
-                    <td>${formatarMoeda(pedido.valor_total)}</td>
-                    <td>
-                        <button data-ver-pedido="${pedido.id_pedido}">
-                            Detalhes
-                        </button>
-                        ${pedido.status !== 'cancelado' ? `
-                            <button class="btn-excluir" data-cancelar-pedido="${pedido.id_pedido}">
-                                Cancelar
-                            </button>
-                        ` : ''}
-                    </td>
-                </tr>
-            `
-        })
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-}
-
-document.getElementById('listaPedidos').addEventListener('click', async function (event) {
-    const idVer = event.target.dataset.verPedido
-    const idCancelar = event.target.dataset.cancelarPedido
-
-    try {
-        if (idVer) {
-            const resultado = await requisicao(`/api/pedidos/${idVer}`)
-            const pedido = resultado.pedido
-            const detalhes = document.getElementById('detalhesPedido')
-
-            let html = `
-                <h3>Pedido ${pedido.id_pedido}</h3>
-                <p>Cliente: ${escapar(pedido.cliente)}</p>
-                <p>Status: ${escapar(pedido.status)}</p>
-                <h4>Produtos</h4>
-            `
-
-            resultado.itens.forEach(function (item) {
-                html += `
-                    <p>
-                        ${escapar(item.produto)} |
-                        Quantidade: ${item.quantidade} |
-                        Subtotal: ${formatarMoeda(item.subtotal)}
-                    </p>
-                `
-            })
-
-            html += `<h3>Total: ${formatarMoeda(pedido.valor_total)}</h3>`
-
-            detalhes.innerHTML = html
-        }
-
-        if (idCancelar) {
-            if (!confirm('Deseja cancelar este pedido?')) return
-
-            await requisicao(`/api/pedidos/${idCancelar}/cancelar`, 'PATCH')
-
-            mostrarMensagem('Pedido cancelado com sucesso')
-            carregarPedidos()
-        }
-
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-})
-
-async function iniciarSistema() {
-    try {
-        await carregarClientes()
-        await carregarProdutos()
-        await carregarPedidos()
-    } catch (erro) {
-        mostrarMensagem(erro.message)
-    }
-}
-
-iniciarSistema()
+$('formPedido').addEventListener('submit',executar(async e=>{
+ e.preventDefault();const r=await api('/pedidos','POST',{id_cliente:Number($('pedidoCliente').value),itens:itens.map(i=>({id_produto:i.id_produto,quantidade:i.quantidade}))})
+ itens=[];renderItens();$('formPedido').reset();await carregar('pedidos');await opcoesPedido();mensagem('Pedido '+r.id_pedido+' registrado — '+moeda(r.valor_total))
+}))
+if(token&&usuario)executar(async()=>{usuario=await api('/me');$('nomeUsuario').textContent='Usuário: '+usuario.nome;await abrir('inicio')})()
